@@ -5,9 +5,10 @@ import os
 import threading
 import queue
 import pygame
-import pyttsx3
+import time
+import io
+from gtts import gTTS
 from TikTokLive import TikTokLiveClient
-# เพิ่ม FollowEvent เข้ามาดักจับคนกดติดตาม
 from TikTokLive.events import ConnectEvent, GiftEvent, CommentEvent, FollowEvent
 
 CONFIG_FILE = "config.json"
@@ -18,8 +19,9 @@ tts_queue = queue.Queue()
 active_settings = {"speed": 150, "volume": 100, "max_len": 3000}
 
 # ==========================================
-# ตั้งค่า Theme สไตล์ TikFinity (Light Mode)
+# เริ่มระบบเสียงและ Theme พื้นฐาน
 # ==========================================
+pygame.mixer.init() # ย้ายมาเปิดระบบเสียงตั้งแต่เริ่มแอปเพื่อให้ปุ่ม Test ใช้งานได้
 ctk.set_appearance_mode("Light")  
 ctk.set_default_color_theme("blue")
 
@@ -41,7 +43,7 @@ def load_config():
                     if username:
                         default_config["accounts"][username] = {
                             "sound_path": saved.get("sound_path", ""),
-                            "follow_sound_path": "", # เพิ่มค่าเริ่มต้นสำหรับเสียงติดตาม
+                            "follow_sound_path": "", 
                             "tts_speed": saved.get("tts_speed", 150),
                             "tts_volume": saved.get("tts_volume", 100),
                             "tts_max_len": saved.get("tts_max_len", 3000)
@@ -53,33 +55,55 @@ def load_config():
     return default_config
 
 def tts_worker():
-    engine = pyttsx3.init()
     while True:
         text = tts_queue.get()
         if text is None: break
-        
-        engine.setProperty('rate', active_settings["speed"])
-        engine.setProperty('volume', active_settings["volume"] / 100.0)
         
         if len(text) > active_settings["max_len"]:
             text = text[:active_settings["max_len"]]
             
         try:
-            engine.say(text)
-            engine.runAndWait()
-        except:
-            pass
+            tts = gTTS(text=text, lang='th')
+            fp = io.BytesIO()
+            tts.write_to_fp(fp)
+            fp.seek(0)
+            
+            pygame.mixer.music.load(fp)
+            pygame.mixer.music.set_volume(active_settings["volume"] / 100.0)
+            pygame.mixer.music.play()
+            
+            while pygame.mixer.music.get_busy():
+                time.sleep(0.1)
+                
+        except Exception as e:
+            print(f"TTS Error: {e}")
 
-# เพิ่มตัวแปร follow_sound_path เข้ามาในบอท
+# ==========================================
+# ฟังก์ชันปุ่ม Test
+# ==========================================
+def test_system():
+    confirm_settings() # อัปเดตความดังล่าสุดก่อนเทสต์
+    log_queue.put("🔧 ระบบ: กำลังทดสอบเสียง...")
+    tts_queue.put("สวัสดีครับ ทดสอบระบบเสียงสิริและการแจ้งเตือนครับ")
+    
+    # ดึงไฟล์เสียงมาทดสอบเล่น
+    gift_path = gift_sound_entry.get().strip()
+    follow_path = follow_sound_entry.get().strip()
+    
+    def play_test_fx():
+        if follow_path and os.path.exists(follow_path):
+            pygame.mixer.Sound(follow_path).play()
+        time.sleep(1.5) # เว้นจังหวะให้เสียง Follow เล่นก่อนค่อยเล่น Gift
+        if gift_path and os.path.exists(gift_path):
+            pygame.mixer.Sound(gift_path).play()
+            
+    threading.Thread(target=play_test_fx, daemon=True).start()
+
 def start_bot(username, gift_sound_path, follow_sound_path):
     try:
-        pygame.mixer.init()
-        # โหลดเสียงของขวัญ
         gift_sound = pygame.mixer.Sound(gift_sound_path) if gift_sound_path and os.path.exists(gift_sound_path) else None
-        # โหลดเสียงคนกดติดตาม
         follow_sound = pygame.mixer.Sound(follow_sound_path) if follow_sound_path and os.path.exists(follow_sound_path) else None
         
-        threading.Thread(target=tts_worker, daemon=True).start()
         client = TikTokLiveClient(unique_id=username)
 
         @client.on(ConnectEvent)
@@ -89,7 +113,7 @@ def start_bot(username, gift_sound_path, follow_sound_path):
         @client.on(CommentEvent)
         async def on_comment(event: CommentEvent):
             log_queue.put(f"💬 {event.user.nickname}: {event.comment}")
-            tts_queue.put(event.comment)
+            tts_queue.put(f"{event.user.nickname} พูดว่า {event.comment}")
 
         @client.on(GiftEvent)
         async def on_gift(event: GiftEvent):
@@ -99,7 +123,6 @@ def start_bot(username, gift_sound_path, follow_sound_path):
             if gift_sound:
                 gift_sound.play()
 
-        # Event: เมื่อมีคนกดติดตามใหม่
         @client.on(FollowEvent)
         async def on_follow(event: FollowEvent):
             log_queue.put(f"👤 {event.user.nickname} เริ่มติดตามคุณ!")
@@ -155,8 +178,6 @@ def confirm_settings():
         
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config_data, f)
-            
-    messagebox.showinfo("ยืนยัน", "✔️ อัปเดตการตั้งค่าเสียงเรียบร้อย (มีผลทันที)")
 
 def run_app():
     username = user_combo.get().strip()
@@ -221,7 +242,7 @@ def browse_follow_file():
 # ==========================================
 root = ctk.CTk()
 root.title("TikTok Live Studio - Dashboard")
-root.geometry("1020x700") # ขยายความสูงขึ้นนิดหน่อยเพื่อให้พอดีกับกล่องใส่เสียง 2 ช่อง
+root.geometry("1020x730") 
 root.configure(fg_color="#F0F2F5")
 
 config_data = load_config()
@@ -231,7 +252,7 @@ header_font = ctk.CTkFont(family="Helvetica", size=14, weight="bold")
 body_font = ctk.CTkFont(family="Helvetica", size=13)
 
 # ------------------------------------------
-# ส่วนซ้าย: Sidebar (ตั้งค่าต่างๆ)
+# ส่วนซ้าย: Sidebar
 # ------------------------------------------
 sidebar_frame = ctk.CTkFrame(root, width=330, corner_radius=0, fg_color="#FFFFFF")
 sidebar_frame.pack(side="left", fill="y", padx=0, pady=0)
@@ -239,7 +260,6 @@ sidebar_frame.pack_propagate(False)
 
 ctk.CTkLabel(sidebar_frame, text="⚙️ Control Panel", font=title_font, text_color="#1C1E21").pack(pady=(20, 10))
 
-# --- การ์ดตั้งค่าบัญชี ---
 acc_card = ctk.CTkFrame(sidebar_frame, fg_color="#F7F8FA", corner_radius=8)
 acc_card.pack(fill="x", padx=15, pady=(0, 10))
 
@@ -252,25 +272,22 @@ user_combo.pack(padx=15, pady=(0, 10))
 btn_save = ctk.CTkButton(acc_card, text="💾 บันทึกบัญชีนี้", command=save_current_account, fg_color="#3B82F6", text_color="white", hover_color="#2563EB", font=body_font, width=250)
 btn_save.pack(padx=15, pady=(0, 10))
 
-# --- กล่องเสียงของขวัญ ---
 ctk.CTkLabel(acc_card, text="🎁 เสียงแจ้งเตือนของขวัญ:", font=body_font).pack(anchor="w", padx=15)
 gift_sound_entry = ctk.CTkEntry(acc_card, font=body_font, width=250, border_color="#CCD0D5")
 gift_sound_entry.pack(padx=15, pady=(0, 5))
 btn_browse_gift = ctk.CTkButton(acc_card, text="📂 ค้นหาไฟล์เสียง", command=browse_gift_file, fg_color="#64748B", text_color="white", hover_color="#475569", font=body_font, width=250)
 btn_browse_gift.pack(padx=15, pady=(0, 10))
 
-# --- กล่องเสียงคนกดติดตาม ---
 ctk.CTkLabel(acc_card, text="👤 เสียงแจ้งเตือนคนกดติดตาม:", font=body_font).pack(anchor="w", padx=15)
 follow_sound_entry = ctk.CTkEntry(acc_card, font=body_font, width=250, border_color="#CCD0D5")
 follow_sound_entry.pack(padx=15, pady=(0, 5))
 btn_browse_follow = ctk.CTkButton(acc_card, text="📂 ค้นหาไฟล์เสียง", command=browse_follow_file, fg_color="#64748B", text_color="white", hover_color="#475569", font=body_font, width=250)
-btn_browse_follow.pack(padx=15, pady=(0, 15))
+btn_browse_follow.pack(padx=15, pady=(0, 10))
 
-# --- การ์ดตั้งค่าเสียง ---
 tts_card = ctk.CTkFrame(sidebar_frame, fg_color="#F7F8FA", corner_radius=8)
 tts_card.pack(fill="x", padx=15, pady=5)
 
-ctk.CTkLabel(tts_card, text="🎙️ เสียงอ่านแชท (TTS)", font=header_font, text_color="#4B4F56").pack(anchor="w", padx=15, pady=(10, 5))
+ctk.CTkLabel(tts_card, text="🎙️ เสียงอ่านแชท (Google TTS)", font=header_font, text_color="#4B4F56").pack(anchor="w", padx=15, pady=(10, 5))
 
 row1 = ctk.CTkFrame(tts_card, fg_color="transparent")
 row1.pack(fill="x", padx=15, pady=2)
@@ -280,7 +297,7 @@ vol_entry.pack(side="right")
 
 row2 = ctk.CTkFrame(tts_card, fg_color="transparent")
 row2.pack(fill="x", padx=15, pady=2)
-ctk.CTkLabel(row2, text="ความเร็ว (ปกติ 150):", font=body_font).pack(side="left")
+ctk.CTkLabel(row2, text="ความเร็ว (Google ไม่อิงค่านี้):", font=body_font).pack(side="left")
 speed_entry = ctk.CTkEntry(row2, width=50, font=body_font, justify="center", border_color="#CCD0D5")
 speed_entry.pack(side="right")
 
@@ -290,15 +307,18 @@ ctk.CTkLabel(row3, text="อ่านยาวสุด (ตัวอักษ�
 len_entry = ctk.CTkEntry(row3, width=50, font=body_font, justify="center", border_color="#CCD0D5")
 len_entry.pack(side="right")
 
-btn_confirm = ctk.CTkButton(tts_card, text="✔️ อัปเดตเสียงทันที", command=confirm_settings, fg_color="#8B5CF6", hover_color="#7C3AED", text_color="white", font=body_font, width=250)
-btn_confirm.pack(padx=15, pady=(10, 15))
+# --- ปุ่มเทสต์ระบบเสียง ---
+btn_test = ctk.CTkButton(tts_card, text="🔊 ทดสอบเสียงทั้งหมด", command=test_system, fg_color="#10B981", hover_color="#059669", text_color="white", font=body_font, width=250)
+btn_test.pack(padx=15, pady=(10, 5))
 
-# --- ปุ่มเริ่ม ---
+btn_confirm = ctk.CTkButton(tts_card, text="✔️ อัปเดตตั้งค่า", command=confirm_settings, fg_color="#8B5CF6", hover_color="#7C3AED", text_color="white", font=body_font, width=250)
+btn_confirm.pack(padx=15, pady=(5, 15))
+
 start_btn = ctk.CTkButton(sidebar_frame, text="▶ START LIVE", command=run_app, fg_color="#FE2C55", hover_color="#E62A4D", text_color="white", font=ctk.CTkFont(family="Helvetica", size=16, weight="bold"), height=50, width=290)
 start_btn.pack(side="bottom", pady=15)
 
 # ------------------------------------------
-# ส่วนขวา: Main Content (กล่องแชท)
+# ส่วนขวา: Main Content
 # ------------------------------------------
 main_frame = ctk.CTkFrame(root, fg_color="transparent")
 main_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
@@ -315,6 +335,9 @@ len_entry.insert(0, "3000")
 if config_data["last_used"]:
     user_combo.set(config_data["last_used"])
     on_account_select(config_data["last_used"])
+
+# สตาร์ท Thread เสียงอ่านมารอไว้ตั้งแต่เริ่มแอป
+threading.Thread(target=tts_worker, daemon=True).start()
 
 root.after(100, process_queue)
 root.mainloop()
