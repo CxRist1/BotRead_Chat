@@ -1,6 +1,5 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, LabelFrame
-from tkinter import ttk
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
 import json
 import os
 import threading
@@ -15,12 +14,13 @@ CONFIG_FILE = "config.json"
 log_queue = queue.Queue()
 tts_queue = queue.Queue()
 
-# ตัวแปรเก็บการตั้งค่าเสียงปัจจุบัน (เพื่อให้เปลี่ยนค่าได้ทันทีขณะบอทรันอยู่)
-active_settings = {
-    "speed": 150,
-    "volume": 100,
-    "max_len": 3000
-}
+active_settings = {"speed": 150, "volume": 100, "max_len": 3000}
+
+# ==========================================
+# ตั้งค่า Theme สไตล์ TikFinity (Light Mode)
+# ==========================================
+ctk.set_appearance_mode("Light")  
+ctk.set_default_color_theme("blue")
 
 def get_int(entry_widget, default_value):
     try:
@@ -52,12 +52,10 @@ def load_config():
 
 def tts_worker():
     engine = pyttsx3.init()
-    
     while True:
         text = tts_queue.get()
         if text is None: break
         
-        # ดึงค่าล่าสุดมาใช้เสมอ ทำให้ปรับความเร็ว/ความดังระหว่างไลฟ์ได้ทันที
         engine.setProperty('rate', active_settings["speed"])
         engine.setProperty('volume', active_settings["volume"] / 100.0)
         
@@ -75,7 +73,6 @@ def start_bot(username, sound_path):
         pygame.mixer.init()
         gift_sound = pygame.mixer.Sound(sound_path) if sound_path and os.path.exists(sound_path) else None
         
-        # รันระบบเสียง
         threading.Thread(target=tts_worker, daemon=True).start()
         client = TikTokLiveClient(unique_id=username)
 
@@ -102,8 +99,9 @@ def start_bot(username, sound_path):
 
 def process_queue():
     while not log_queue.empty():
-        chat_box.insert(tk.END, log_queue.get_nowait() + "\n")
-        chat_box.see(tk.END)
+        msg = log_queue.get_nowait() + "\n"
+        chat_box.insert("end", msg)
+        chat_box.see("end")
     root.after(100, process_queue)
 
 def save_current_account():
@@ -119,29 +117,24 @@ def save_current_account():
         "tts_max_len": get_int(len_entry, 3000)
     }
     config_data["last_used"] = username
-    user_combo['values'] = list(config_data["accounts"].keys())
+    user_combo.configure(values=list(config_data["accounts"].keys()))
     
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config_data, f)
         
-    messagebox.showinfo("สำเร็จ", f"💾 จดจำการตั้งค่าของช่อง '{username}' เรียบร้อยแล้ว!")
+    messagebox.showinfo("สำเร็จ", f"💾 จดจำการตั้งค่าบัญชีเรียบร้อย!")
 
 def confirm_settings():
-    # อัปเดตตัวแปรระบบเสียงให้มีผลทันที
     active_settings["volume"] = get_int(vol_entry, 100)
     active_settings["speed"] = get_int(speed_entry, 150)
     active_settings["max_len"] = get_int(len_entry, 3000)
     
-    # จัดตัวเลขในกล่องข้อความให้สวยงาม (เผื่อผู้ใช้พิมพ์ผิด)
-    vol_entry.delete(0, tk.END); vol_entry.insert(0, active_settings["volume"])
-    speed_entry.delete(0, tk.END); speed_entry.insert(0, active_settings["speed"])
-    len_entry.delete(0, tk.END); len_entry.insert(0, active_settings["max_len"])
+    vol_entry.delete(0, "end"); vol_entry.insert(0, active_settings["volume"])
+    speed_entry.delete(0, "end"); speed_entry.insert(0, active_settings["speed"])
+    len_entry.delete(0, "end"); len_entry.insert(0, active_settings["max_len"])
     
-    # ถ้ามีชื่อช่องอยู่ ให้เซฟค่าลงไฟล์ด้วย
     username = user_combo.get().strip()
-    if username:
-        if username not in config_data["accounts"]:
-            config_data["accounts"][username] = {}
+    if username and username in config_data["accounts"]:
         config_data["accounts"][username]["tts_volume"] = active_settings["volume"]
         config_data["accounts"][username]["tts_speed"] = active_settings["speed"]
         config_data["accounts"][username]["tts_max_len"] = active_settings["max_len"]
@@ -157,16 +150,15 @@ def run_app():
         messagebox.showwarning("แจ้งเตือน", "กรุณาใส่ชื่อช่อง TikTok")
         return
 
-    # เรียกใช้ฟังก์ชันยืนยันการตั้งค่าก่อนเริ่ม
     confirm_settings()
     
     config_data["last_used"] = username
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config_data, f)
     
-    start_btn.config(state=tk.DISABLED, text="กำลังดึงข้อมูล...")
-    chat_box.delete(1.0, tk.END)
-    chat_box.insert(tk.END, "กำลังเชื่อมต่อ...\n")
+    start_btn.configure(state="disabled", text="กำลังเชื่อมต่อ...")
+    chat_box.delete("1.0", "end")
+    chat_box.insert("end", f"กำลังเชื่อมต่อช่อง: {username}...\n")
     
     bot_thread = threading.Thread(
         target=start_bot, 
@@ -175,85 +167,127 @@ def run_app():
     )
     bot_thread.start()
 
-def on_account_select(event=None):
-    selected = user_combo.get()
-    if selected in config_data["accounts"]:
-        acc = config_data["accounts"][selected]
+def on_account_select(choice):
+    if choice in config_data["accounts"]:
+        acc = config_data["accounts"][choice]
         
-        sound_entry.delete(0, tk.END)
+        sound_entry.delete(0, "end")
         sound_entry.insert(0, acc.get("sound_path", ""))
         
-        vol_entry.delete(0, tk.END)
+        vol_entry.delete(0, "end")
         vol_entry.insert(0, acc.get("tts_volume", 100))
         
-        speed_entry.delete(0, tk.END)
+        speed_entry.delete(0, "end")
         speed_entry.insert(0, acc.get("tts_speed", 150))
         
-        len_entry.delete(0, tk.END)
+        len_entry.delete(0, "end")
         len_entry.insert(0, acc.get("tts_max_len", 3000))
         
-        # อัปเดตค่าให้ระบบเสียงทันทีเมื่อเปลี่ยน Profile
         active_settings["volume"] = acc.get("tts_volume", 100)
         active_settings["speed"] = acc.get("tts_speed", 150)
         active_settings["max_len"] = acc.get("tts_max_len", 3000)
 
-# --- สร้างหน้าต่าง GUI ---
-root = tk.Tk()
-root.title("TikTok Live Bot")
-root.geometry("540x650")
+def browse_file():
+    filepath = filedialog.askopenfilename(filetypes=[("Audio Files", "*.wav *.mp3")])
+    if filepath:
+        sound_entry.delete(0, "end")
+        sound_entry.insert(0, filepath)
+
+# ==========================================
+# สร้างหน้าต่างหลัก CTk
+# ==========================================
+root = ctk.CTk()
+root.title("TikTok Live Studio - Dashboard")
+root.geometry("1000x650")
+root.configure(fg_color="#F0F2F5")
+
 config_data = load_config()
 
-frame_top = LabelFrame(root, text=" ⚙️ ตั้งค่าบัญชีและการเชื่อมต่อ ", padx=10, pady=10)
-frame_top.pack(pady=10, fill="x", padx=20)
+title_font = ctk.CTkFont(family="Helvetica", size=18, weight="bold")
+header_font = ctk.CTkFont(family="Helvetica", size=14, weight="bold")
+body_font = ctk.CTkFont(family="Helvetica", size=13)
 
-tk.Label(frame_top, text="ชื่อช่อง TikTok:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-user_combo = ttk.Combobox(frame_top, width=22)
-user_combo.grid(row=0, column=1, pady=5, sticky="w")
-user_combo['values'] = list(config_data["accounts"].keys())
-user_combo.bind("<<ComboboxSelected>>", on_account_select)
+# ------------------------------------------
+# ส่วนซ้าย: Sidebar (ตั้งค่าต่างๆ)
+# ------------------------------------------
+sidebar_frame = ctk.CTkFrame(root, width=320, corner_radius=0, fg_color="#FFFFFF")
+sidebar_frame.pack(side="left", fill="y", padx=0, pady=0)
+sidebar_frame.pack_propagate(False) 
 
-btn_save = tk.Button(frame_top, text="💾 จดจำบัญชีนี้", command=save_current_account, bg="#17a2b8", fg="white")
-btn_save.grid(row=0, column=2, padx=5, sticky="w")
+ctk.CTkLabel(sidebar_frame, text="⚙️ Control Panel", font=title_font, text_color="#1C1E21").pack(pady=(20, 20))
 
-tk.Label(frame_top, text="เสียงแจ้งเตือน:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
-sound_entry = tk.Entry(frame_top, width=25)
-sound_entry.grid(row=1, column=1, pady=5, sticky="w")
-tk.Button(frame_top, text="เลือกไฟล์", command=lambda: sound_entry.insert(0, filedialog.askopenfilename()) if sound_entry.delete(0, tk.END) == None else None).grid(row=1, column=2, padx=5, sticky="w")
+# --- การ์ดตั้งค่าบัญชี ---
+acc_card = ctk.CTkFrame(sidebar_frame, fg_color="#F7F8FA", corner_radius=8)
+acc_card.pack(fill="x", padx=20, pady=(0, 15))
 
-tts_frame = LabelFrame(root, text=" 🎙️ ตั้งค่าเสียงอ่านแชท (Text-to-Speech) ", padx=10, pady=10)
-tts_frame.pack(fill="x", padx=20, pady=5)
+ctk.CTkLabel(acc_card, text="บัญชี & การเชื่อมต่อ", font=header_font, text_color="#4B4F56").pack(anchor="w", padx=15, pady=(10, 5))
 
-tk.Label(tts_frame, text="ความดัง (%):").grid(row=0, column=0, sticky="e", pady=5)
-vol_entry = tk.Entry(tts_frame, width=10)
-vol_entry.grid(row=0, column=1, sticky="w", padx=5)
+ctk.CTkLabel(acc_card, text="ชื่อช่อง TikTok (@):", font=body_font).pack(anchor="w", padx=15)
+user_combo = ctk.CTkComboBox(acc_card, values=list(config_data["accounts"].keys()), command=on_account_select, font=body_font, width=250, border_color="#CCD0D5")
+user_combo.pack(padx=15, pady=(0, 10))
 
-tk.Label(tts_frame, text="ความเร็ว (ปกติ 150):").grid(row=0, column=2, sticky="e", pady=5)
-speed_entry = tk.Entry(tts_frame, width=10)
-speed_entry.grid(row=0, column=3, sticky="w", padx=5)
+# เปลี่ยนสีปุ่ม บันทึกบัญชี (สีฟ้า Modern Blue)
+btn_save = ctk.CTkButton(acc_card, text="💾 บันทึกบัญชีนี้", command=save_current_account, fg_color="#3B82F6", text_color="white", hover_color="#2563EB", font=body_font, width=250)
+btn_save.pack(padx=15, pady=(0, 10))
 
-tk.Label(tts_frame, text="อ่านข้อความยาวสุด:").grid(row=1, column=0, sticky="e", pady=5)
-len_entry = tk.Entry(tts_frame, width=10)
-len_entry.grid(row=1, column=1, sticky="w", padx=5)
-tk.Label(tts_frame, text="(ตัวอักษร)").grid(row=1, column=2, sticky="w")
+ctk.CTkLabel(acc_card, text="ไฟล์เสียงแจ้งเตือนของขวัญ:", font=body_font).pack(anchor="w", padx=15)
+sound_entry = ctk.CTkEntry(acc_card, font=body_font, width=250, border_color="#CCD0D5")
+sound_entry.pack(padx=15, pady=(0, 5))
 
-# เพิ่มปุ่มยืนยันการตั้งค่า
-btn_confirm = tk.Button(tts_frame, text="✔️ ยืนยันการตั้งค่า", command=confirm_settings, bg="#ffc107", fg="black")
-btn_confirm.grid(row=1, column=3, padx=5, sticky="w")
+# เปลี่ยนสีปุ่ม ค้นหาไฟล์ (สีเทาอมฟ้า Slate Gray)
+btn_browse = ctk.CTkButton(acc_card, text="📂 ค้นหาไฟล์", command=browse_file, fg_color="#64748B", text_color="white", hover_color="#475569", font=body_font, width=250)
+btn_browse.pack(padx=15, pady=(0, 15))
 
-# เติมค่าเริ่มต้น
+# --- การ์ดตั้งค่าเสียง ---
+tts_card = ctk.CTkFrame(sidebar_frame, fg_color="#F7F8FA", corner_radius=8)
+tts_card.pack(fill="x", padx=20, pady=15)
+
+ctk.CTkLabel(tts_card, text="🎙️ เสียงอ่านแชท (TTS)", font=header_font, text_color="#4B4F56").pack(anchor="w", padx=15, pady=(10, 5))
+
+row1 = ctk.CTkFrame(tts_card, fg_color="transparent")
+row1.pack(fill="x", padx=15, pady=5)
+ctk.CTkLabel(row1, text="ความดัง (%):", font=body_font).pack(side="left")
+vol_entry = ctk.CTkEntry(row1, width=50, font=body_font, justify="center", border_color="#CCD0D5")
+vol_entry.pack(side="right")
+
+row2 = ctk.CTkFrame(tts_card, fg_color="transparent")
+row2.pack(fill="x", padx=15, pady=5)
+ctk.CTkLabel(row2, text="ความเร็ว (ปกติ 150):", font=body_font).pack(side="left")
+speed_entry = ctk.CTkEntry(row2, width=50, font=body_font, justify="center", border_color="#CCD0D5")
+speed_entry.pack(side="right")
+
+row3 = ctk.CTkFrame(tts_card, fg_color="transparent")
+row3.pack(fill="x", padx=15, pady=5)
+ctk.CTkLabel(row3, text="อ่านยาวสุด (ตัวอักษร):", font=body_font).pack(side="left")
+len_entry = ctk.CTkEntry(row3, width=50, font=body_font, justify="center", border_color="#CCD0D5")
+len_entry.pack(side="right")
+
+# เปลี่ยนสีปุ่ม อัปเดตเสียง (สีม่วง Vibrant Purple)
+btn_confirm = ctk.CTkButton(tts_card, text="✔️ อัปเดตเสียงทันที", command=confirm_settings, fg_color="#7B7A7C", hover_color="#D1D1D1", text_color="white", font=body_font, width=250)
+btn_confirm.pack(padx=15, pady=(10, 15))
+
+# --- ปุ่มเริ่ม (เปลี่ยนสีเป็น TikTok Pink/Red) ---
+start_btn = ctk.CTkButton(sidebar_frame, text="▶ START LIVE", command=run_app, fg_color="#FF0000", hover_color="#F0C3CB", text_color="white", font=ctk.CTkFont(family="Helvetica", size=16, weight="bold"), height=50, width=280)
+start_btn.pack(side="bottom", pady=20)
+
+# ------------------------------------------
+# ส่วนขวา: Main Content (กล่องแชท)
+# ------------------------------------------
+main_frame = ctk.CTkFrame(root, fg_color="transparent")
+main_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
+
+ctk.CTkLabel(main_frame, text="💬 Live Event Monitor", font=title_font, text_color="#1C1E21").pack(anchor="w", pady=(0, 10))
+
+chat_box = ctk.CTkTextbox(main_frame, font=("Helvetica", 14), corner_radius=10, fg_color="#FFFFFF", text_color="#333333", border_width=1, border_color="#CCD0D5")
+chat_box.pack(fill="both", expand=True)
+
 vol_entry.insert(0, "100")
 speed_entry.insert(0, "150")
 len_entry.insert(0, "3000")
 
 if config_data["last_used"]:
     user_combo.set(config_data["last_used"])
-    on_account_select()
-
-start_btn = tk.Button(root, text="▶ เริ่มเชื่อมต่อไลฟ์สด", command=run_app, bg="#28a745", fg="white", font=("Arial", 11, "bold"), width=20)
-start_btn.pack(pady=10)
-
-chat_box = scrolledtext.ScrolledText(root, width=60, height=14)
-chat_box.pack(padx=20, pady=5)
+    on_account_select(config_data["last_used"])
 
 root.after(100, process_queue)
 root.mainloop()
